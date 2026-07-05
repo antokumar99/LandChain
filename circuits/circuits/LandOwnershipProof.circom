@@ -5,22 +5,19 @@ include "../node_modules/circomlib/circuits/poseidon.circom";
 template LandOwnershipProof() {
     signal input landId;
     signal input ownerSecret;
-    signal input newOwner;
-    signal input transferNonce;
+    signal input proofContext;
     signal input ownerCommitment;
-    signal input transferCommitment;
+    signal input proofCommitment;
 
     component ownerHasher = Poseidon(2);
     ownerHasher.inputs[0] <== landId;
     ownerHasher.inputs[1] <== ownerSecret;
     ownerCommitment === ownerHasher.out;
 
-    component transferHasher = Poseidon(2);
-    transferHasher.inputs[0] <== landId;
-    transferHasher.inputs[1] <== newOwner;
-    transferCommitment === transferHasher.out;
-
-    transferNonce === transferNonce;
+    component proofHasher = Poseidon(2);
+    proofHasher.inputs[0] <== landId;
+    proofHasher.inputs[1] <== proofContext;
+    proofCommitment === proofHasher.out;
 }
 
-component main { public [landId, ownerCommitment, transferCommitment] } = LandOwnershipProof();
+component main { public [landId, ownerCommitment, proofCommitment] } = LandOwnershipProof();

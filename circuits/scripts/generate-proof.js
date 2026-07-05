@@ -15,15 +15,28 @@ async function main() {
   const input = JSON.parse(readFileSync(inputPath, "utf8"));
   const poseidon = await buildPoseidon();
   const field = poseidon.F;
+  const proofContext = input.proofContext || input.newOwner || input.transferNonce;
+
+  if (!proofContext) {
+    throw new Error("proofContext is required");
+  }
 
   input.ownerCommitment ||= field.toString(poseidon([input.landId, input.ownerSecret]));
-  input.transferCommitment ||= field.toString(poseidon([input.landId, input.newOwner]));
+  input.proofCommitment ||= input.transferCommitment || field.toString(poseidon([input.landId, proofContext]));
+
+  const circuitInput = {
+    landId: input.landId,
+    ownerSecret: input.ownerSecret,
+    proofContext,
+    ownerCommitment: input.ownerCommitment,
+    proofCommitment: input.proofCommitment,
+  };
 
   mkdirSync(outDir, { recursive: true });
 
-  writeFileSync(generatedInputPath, JSON.stringify(input, null, 2));
+  writeFileSync(generatedInputPath, JSON.stringify(circuitInput, null, 2));
 
-  await snarkjs.wtns.calculate(input, wasm, witness);
+  await snarkjs.wtns.calculate(circuitInput, wasm, witness);
 
   const { proof, publicSignals } = await snarkjs.groth16.prove(zkey, witness);
   const verified = await snarkjs.groth16.verify(JSON.parse(readFileSync(vkey, "utf8")), publicSignals, proof);
