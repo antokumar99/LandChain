@@ -1,0 +1,23 @@
+{
+  "name": "circuits",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "compile": "node scripts/compile.js",
+    "setup": "node scripts/setup.js",
+    "export:verifier": "node scripts/export-verifier.js",
+    "proof": "node scripts/generate-proof.js",
+    "verify": "node scripts/generate-proof.js",
+    "build": "npm run compile && npm run setup && npm run proof && npm run export:verifier"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "circomlib": "^2.0.5",
+    "circomlibjs": "^0.1.7",
+    "snarkjs": "^0.7.6"
+  }
+}
