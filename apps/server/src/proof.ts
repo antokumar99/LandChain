@@ -48,6 +48,7 @@ export async function generateTransferProof(input: {
   ownerSecret: string;
   ownerCommitment: string;
   newOwnerSecret?: string;
+  proofContext?: string;
   transferNonce?: string;
 }) {
   const circuitsRoot = path.join(config.workspaceRoot, "circuits");
@@ -56,6 +57,7 @@ export async function generateTransferProof(input: {
   const outDir = path.join(proofRoot, runId);
   const inputPath = path.join(outDir, "input.json");
   const newOwnerSecret = input.newOwnerSecret ?? createFieldSecret();
+  const proofContext = input.proofContext ?? newOwnerSecret;
   const transferNonce = input.transferNonce ?? createFieldSecret();
   const script = path.join(circuitsRoot, "scripts", "generate-proof.js");
 
@@ -67,6 +69,7 @@ export async function generateTransferProof(input: {
         landId: input.landId,
         ownerSecret: input.ownerSecret,
         ownerCommitment: input.ownerCommitment,
+        proofContext,
         newOwner: newOwnerSecret,
         transferNonce,
       },
@@ -99,12 +102,12 @@ export async function generateTransferProof(input: {
     throw new Error("SnarkJS proof verification failed");
   }
 
-  const [proofLandId, proofOwnerCommitment, transferCommitment] = output.publicSignals;
+  const [proofLandId, proofOwnerCommitment, proofCommitment] = output.publicSignals;
 
   if (
     proofLandId === undefined ||
     proofOwnerCommitment === undefined ||
-    transferCommitment === undefined
+    proofCommitment === undefined
   ) {
     throw new Error("Proof output is missing required public signals");
   }
@@ -126,7 +129,9 @@ export async function generateTransferProof(input: {
     proofPath: path.join(outDir, "proof.json"),
     publicPath: path.join(outDir, "public.json"),
     verificationPath: path.join(outDir, "verification.json"),
-    transferCommitment,
+    proofContext,
+    proofCommitment,
+    transferCommitment: proofCommitment,
     solidity,
   };
 }

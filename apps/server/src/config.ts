@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { config as loadDotenv } from "dotenv";
 
 type DeploymentFile = {
   landRegistryAddress?: string;
@@ -39,6 +40,23 @@ function readDeployment(filePath: string): DeploymentFile | undefined {
 
   return JSON.parse(readFileSync(filePath, "utf8")) as DeploymentFile;
 }
+
+function loadServerEnv() {
+  const candidates = [
+    path.resolve(process.cwd(), ".env"),
+    path.resolve(process.cwd(), "apps/server/.env"),
+    path.resolve(__dirname, "../.env"),
+    path.resolve(__dirname, "../../apps/server/.env"),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      loadDotenv({ path: candidate, override: false });
+    }
+  }
+}
+
+loadServerEnv();
 
 const workspaceRoot = findWorkspaceRoot();
 const deploymentFile =

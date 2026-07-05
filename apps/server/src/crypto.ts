@@ -5,6 +5,8 @@ import { AbiCoder, concat, getBytes, keccak256, toUtf8Bytes, ZeroHash } from "et
 import { config } from "./config";
 
 const abiCoder = AbiCoder.defaultAbiCoder();
+const snarkScalarField =
+  21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 const circuitsRequire = createRequire(path.join(config.workspaceRoot, "circuits", "package.json"));
 const { buildPoseidon } = circuitsRequire("circomlibjs") as {
   buildPoseidon: () => Promise<{
@@ -48,6 +50,33 @@ export function createOwnerSecret() {
 
 export function normalizeLandId(landId: string | number | bigint) {
   return toPositiveUint(landId, "landId").toString();
+}
+
+export function normalizeLandCode(landId: string | number | bigint) {
+  const normalized = String(landId).trim().toUpperCase();
+
+  if (!normalized) {
+    throw new Error("landId is required");
+  }
+
+  if (!/^[A-Z0-9-]+$/.test(normalized)) {
+    throw new Error("landId can contain only letters, numbers, and hyphens");
+  }
+
+  return normalized;
+}
+
+export function deriveChainLandId(landId: string | number | bigint) {
+  const normalized = normalizeLandCode(landId);
+  const digest = BigInt(keccak256(toUtf8Bytes(normalized)));
+
+  return ((digest % (snarkScalarField - 1n)) + 1n).toString();
+}
+
+export function deriveFieldElement(value: string) {
+  const digest = BigInt(keccak256(toUtf8Bytes(value)));
+
+  return ((digest % (snarkScalarField - 1n)) + 1n).toString();
 }
 
 async function getPoseidon() {

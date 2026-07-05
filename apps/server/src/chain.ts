@@ -1,4 +1,4 @@
-import { Contract, JsonRpcProvider, Wallet, isAddress } from "ethers";
+import { Contract, Interface, JsonRpcProvider, Wallet, isAddress } from "ethers";
 import { config } from "./config";
 
 export const landRegistryAbi = [
@@ -10,7 +10,16 @@ export const landRegistryAbi = [
   "function knownMerkleRoots(uint256 merkleRoot) view returns (bool)",
   "function superAdmin() view returns (address)",
   "function authorities(address authority) view returns (bool)",
+  "event AuthorityUpdated(address indexed authority,bool allowed)",
+  "event VerifierUpdated(address indexed verifier)",
+  "event LandRegistered(uint256 indexed landId,uint256 indexed ownerCommitment,uint256 indexed merkleRoot,bytes32 cidHash,uint256 timestamp)",
+  "event OwnershipProofVerified(uint256 indexed landId,uint256 indexed ownerCommitment,uint256 indexed transferCommitment,bool valid,uint256 timestamp)",
+  "event LandTransferred(uint256 indexed landId,uint256 indexed oldOwnerCommitment,uint256 indexed newOwnerCommitment,uint256 merkleRoot,bytes32 cidHash,uint256 timestamp)",
+  "event LandSuspended(uint256 indexed landId,uint256 timestamp)",
+  "event MerkleRootStored(uint256 indexed merkleRoot,address indexed submittedBy,uint256 timestamp)",
 ];
+
+const landRegistryInterface = new Interface(landRegistryAbi);
 
 type ContractTransaction = {
   hash: string;
@@ -83,6 +92,139 @@ function shortAddress(address: string) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
+function clampExplorerCount(value: unknown) {
+  const parsed = typeof value === "string" ? Number.parseInt(value, 10) : Number(value);
+
+  if (!Number.isFinite(parsed)) {
+    return 8;
+  }
+
+  return Math.min(Math.max(parsed, 1), 12);
+}
+
+function stringifyChainValue(value: unknown): unknown {
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => stringifyChainValue(entry));
+  }
+
+  return value;
+}
+
+function serializeDecodedArgs(inputs: ReadonlyArray<{ name: string }>, args: ReadonlyArray<unknown>) {
+  return inputs.reduce<Record<string, unknown>>((serialized, input, index) => {
+    serialized[input.name || `arg${index}`] = stringifyChainValue(args[index]);
+    return serialized;
+  }, {});
+}
+
+function serializeLog(log: {
+  address: string;
+  data: string;
+  topics: readonly string[];
+  index: number;
+  transactionIndex: number;
+  transactionHash: string;
+  blockHash: string;
+  blockNumber: number;
+}) {
+  let decoded:
+    | {
+        name: string;
+        signature: string;
+        args: Record<string, unknown>;
+      }
+    | undefined;
+
+  if (
+    config.registryAddress &&
+    log.address.toLowerCase() === config.registryAddress.toLowerCase()
+  ) {
+    try {
+      const parsed = landRegistryInterface.parseLog({
+        topics: [...log.topics],
+        data: log.data,
+      });
+
+      if (parsed) {
+        decoded = {
+          name: parsed.name,
+          signature: parsed.signature,
+          args: serializeDecodedArgs(parsed.fragment.inputs, parsed.args),
+        };
+      }
+    } catch {
+      decoded = undefined;
+    }
+  }
+
+  return {
+    address: log.address,
+    data: log.data,
+    topics: [...log.topics],
+    index: log.index,
+    transactionIndex: log.transactionIndex,
+    transactionHash: log.transactionHash,
+    blockHash: log.blockHash,
+    blockNumber: log.blockNumber,
+    decoded,
+  };
+}
+
+function bigintToString(value: bigint | null | undefined) {
+  return value === null || value === undefined ? undefined : value.toString();
+}
+
+function lowerAddress(value: string | null | undefined) {
+  return value ? value.toLowerCase() : undefined;
+}
+
+async function getExplorerTransaction(provider: JsonRpcProvider, hash: string) {
+  const [tx, receipt] = await Promise.all([
+    provider.getTransaction(hash),
+    provider.getTransactionReceipt(hash),
+  ]);
+  const logs = receipt?.logs.map((log) => serializeLog(log)) ?? [];
+  const registryAddress = lowerAddress(config.registryAddress);
+  const touchesRegistry =
+    registryAddress !== undefined &&
+    (lowerAddress(tx?.to) === registryAddress ||
+      logs.some((log) => lowerAddress(log.address) === registryAddress));
+
+  return {
+    hash,
+    from: tx?.from,
+    to: tx?.to ?? null,
+    nonce: tx?.nonce,
+    index: tx?.index,
+    value: bigintToString(tx?.value),
+    type: tx?.type,
+    chainId: bigintToString(tx?.chainId),
+    data: tx?.data,
+    gasLimit: bigintToString(tx?.gasLimit),
+    gasPrice: bigintToString(tx?.gasPrice),
+    maxFeePerGas: bigintToString(tx?.maxFeePerGas),
+    maxPriorityFeePerGas: bigintToString(tx?.maxPriorityFeePerGas),
+    blockHash: tx?.blockHash ?? null,
+    blockNumber: tx?.blockNumber ?? null,
+    receipt: receipt
+      ? {
+          status: receipt.status,
+          gasUsed: bigintToString(receipt.gasUsed),
+          cumulativeGasUsed: bigintToString(receipt.cumulativeGasUsed),
+          contractAddress: receipt.contractAddress,
+          logsBloom: receipt.logsBloom,
+        }
+      : null,
+    logs,
+    registryEvents: logs.filter((log) => log.decoded !== undefined),
+    touchesRegistry,
+  };
+}
+
 export async function getAuthorityStatus() {
   const contractAddress = requireRegistryAddress();
   const provider = getProvider();
@@ -133,6 +275,60 @@ export async function getChainStatus() {
     contractAddress: config.registryAddress,
     latestMerkleRoot: latestMerkleRoot.toString(),
     authority,
+  };
+}
+
+export async function getBlockExplorer(input: { count?: unknown } = {}) {
+  const provider = getProvider();
+  const latestBlockNumber = await provider.getBlockNumber();
+  const count = clampExplorerCount(input.count);
+  const startBlock = latestBlockNumber;
+  const endBlock = Math.max(0, startBlock - count + 1);
+  const blockNumbers = Array.from(
+    { length: startBlock - endBlock + 1 },
+    (_entry, index) => startBlock - index,
+  );
+  const blocks = await Promise.all(
+    blockNumbers.map(async (blockNumber) => {
+      const block = await provider.getBlock(blockNumber);
+
+      if (!block) {
+        return null;
+      }
+
+      const transactions = await Promise.all(
+        block.transactions.map((hash) => getExplorerTransaction(provider, hash)),
+      );
+      const registryEvents = transactions.flatMap((transaction) => transaction.registryEvents);
+
+      return {
+        number: block.number,
+        hash: block.hash,
+        parentHash: block.parentHash,
+        nonce: block.nonce,
+        timestamp: block.timestamp,
+        timestampIso: new Date(block.timestamp * 1000).toISOString(),
+        miner: block.miner,
+        difficulty: bigintToString(block.difficulty),
+        gasLimit: bigintToString(block.gasLimit),
+        gasUsed: bigintToString(block.gasUsed),
+        baseFeePerGas: bigintToString(block.baseFeePerGas),
+        extraData: block.extraData,
+        transactionCount: transactions.length,
+        transactions,
+        registryEvents,
+      };
+    }),
+  );
+
+  return {
+    network: {
+      rpcUrl: config.chainRpcUrl,
+      latestBlockNumber,
+      contractAddress: config.registryAddress || null,
+      shownBlockCount: blocks.filter((block) => block !== null).length,
+    },
+    blocks: blocks.filter((block) => block !== null),
   };
 }
 
