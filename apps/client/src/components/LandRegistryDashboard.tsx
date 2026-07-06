@@ -362,24 +362,7 @@ function cx(...classes: Array<string | false | null | undefined>) {
 }
 
 export default function LandRegistryDashboard() {
-  const [session, setSession] = useState<SessionUser | null>(() => {
-    if (typeof window === "undefined") {
-      return null;
-    }
-
-    const saved = window.localStorage.getItem(sessionKey);
-
-    if (!saved) {
-      return null;
-    }
-
-    try {
-      return JSON.parse(saved) as SessionUser;
-    } catch {
-      window.localStorage.removeItem(sessionKey);
-      return null;
-    }
-  });
+  const [session, setSession] = useState<SessionUser | null>(null);
   const [activeView, setActiveView] = useState<ViewKey>("dashboard");
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [authForm, setAuthForm] = useState({
@@ -519,6 +502,18 @@ export default function LandRegistryDashboard() {
     },
     [authHeaders, session],
   );
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem(sessionKey);
+
+    if (saved) {
+      try {
+        setSession(JSON.parse(saved) as SessionUser);
+      } catch {
+        window.localStorage.removeItem(sessionKey);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
